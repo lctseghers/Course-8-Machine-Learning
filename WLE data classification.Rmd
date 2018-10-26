@@ -1,0 +1,114 @@
+---
+title: "Classifying Weight Lifting Techniques"
+author: "Lisa Seghers"
+date: "October 25, 2018"
+output: html_document:
+  keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Using accelerometers to quantify bicep curl techniques
+
+#### Executive Summary
+
+In this report, raw data from a set of accelerometers is evaluated and machine learning is applied to classify data into five categories representing different bicep curl techniques.  The data were processed as described below and a random forest technique was used to classify the data, resulting in 99.1% accuracy.
+
+#### Introduction
+
+Determining whether someone is performing an exercise correctly or incorrectly, and further in which way the exercise is incorrectly performed, would be very helpful in providing specific guidance for correcting that person's performance, especially if the guidance is provided by an app.  This report describes a technique in which the raw data is processed and analyzed to predict which type of technique has been used to perform a bicep curl.
+
+Data were provided for this assignment courtesy of http://groupware.les.inf.puc-rio.br/har.  From the site:
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+1. exactly according to the specification (Class A), 
+2. throwing the elbows to the front (Class B), 
+3. lifting the dumbbell only halfway (Class C), 
+4. lowering the dumbbell only halfway (Class D), and 
+5. throwing the hips to the front (Class E)."
+
+#### Method
+
+Prior to any model building, various libraries were loaded and parallel processing was set up to reduce the time needed to process the random forest model.  Additional insights on parallel processing were provided in this document by Len Greski, a Coursera course mentor:  https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md.
+
+``` {r setup}
+library(caret)
+set.seed(98789)
+## allow for parallel processing to speed up the random forest processes
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+```
+
+Data were saved locally and loaded into RStudio Version 1.1.453.  The dataset "pml_testing" was ignored until the end.  The dataset "pml_training" was viewed to determine the type of data in each variable.  The raw dataset consisted of 19622 observations of 160 variables.  Of those variables, a majority consisted of periodic summary statistics and miscellaneous data with participant names and time- or trial-related information.  The objective of this modeling strategy was to use the raw data itself to classify the performances. Therefore, only the variables containing raw data from the accelerometers and the classe (truth) variable were retained for developing the model; all other data were omitted.
+
+``` {r preprocessing}
+pml_training <- read.csv("pml-training.csv")
+pml_testing <- read.csv("pml-testing.csv")
+reduced_training <- pml_training[, -c(1:2, 5:7, 12:17, 69:76, 125:130)]
+reduced_training <- reduced_training[, -c(1:2, 7:26, 39:48, 58:64, 68:82, 84:94, 106:114, 116:125)]
+```
+
+Using this reduced training set, it is further split into training and validation sets.
+
+``` {r split}
+inTrain <- createDataPartition(y = reduced_training$classe, p= 0.7, list = FALSE)
+training <- reduced_training[inTrain,]
+validation <- reduced_training[-inTrain,]
+```
+
+The Github document on random forest performance suggests to create x and y objects to help with the formula part of the argument.
+
+``` {r formula}
+x <- training[, -51]  ## all the variables except classe (truth)
+y <- training[, 51]   ## only classe (truth)
+```
+
+The cross-validation argument is constructed to allow for k-fold based cross validation within the train function.  The model is created using the train function (from the caret package) and the "rf" method, with cross-validation included.
+
+``` {r cv}
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+fit <- train(x,y, method="rf",data=pml_training, trControl = fitControl)
+```
+
+Because parallel processing was invoked to speed up the random forest modelling, it is necessary to shut down the cluster and return to single threaded processing.
+
+``` {r shutdown}
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+Now that the model has been constructed, it should be evaluated for accuracy. The top 20 variables used in the model are listed in order of importance to the model.
+
+``` {r results}
+fit
+fit$resample
+confusionMatrix.train(fit)
+varImp(fit)
+```
+
+
+A table is provided to show the results of the model on the training dataset (a subset of the pml_training dataset); unsurprisingly, all of the training observations are accurately classified.  A second table is provided to show the results of the model as applied to the validation dataset; some errors are noted and can be attributed to slight overfitting of the model to the training data, but the accuracy is still high at 99% for this set.
+
+``` {r predictions}
+pred <- predict(fit, training)
+table(pred, training$classe)
+pred2 <- predict(fit, validation)
+table(pred2, validation$classe)
+```
+
+The model is also applied to the pml_testing dataset and the results are provided.  Because that dataset did not include the "classe" variable, and therefore did not have the actual classifications, the accuracy of this last prediction set was tested separately in an automated quiz.  Note that per https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-requiredModelAccuracy.md, an accuracy of at least 0.99 (or 99%) is strongly recommended to pass the automated quiz.
+
+``` {r testresults}
+pred3 <- predict(fit, pml_testing)
+pred3
+```
+
+
+#### Conclusion
+
+The model described in this report accurately classifies over 99% of the observations, suggesting that it is an effective means of taking raw accelerometer data and automatically determine which of five performance techniques is being performed by a participant with a high degree of confidence.
